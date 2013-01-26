@@ -384,4 +384,154 @@ struct _KDDEBUGGER_DATA64 { /* size 812 id 154 */
 typedef struct _KDDEBUGGER_DATA64 /* id 154 */ KDDEBUGGER_DATA64;
 typedef struct _KDDEBUGGER_DATA64 /* id 154 */ *PKDDEBUGGER_DATA64;
 
+
+/*our dump header 
+ *kdd_os
+ *cpu_regs,
+ *ctrl_regs
+ * */
+
+typedef struct {
+    uint32_t build;
+    int w64;
+    int mp;
+    char *name;
+    uint64_t base;              /* KernBase: start looking here */
+    uint32_t range;             /* |         and search an area this size */
+    uint32_t version;           /* +-> NtBuildNumber */
+    uint32_t modules;           /* +-> PsLoadedModuleList */
+    uint32_t prcbs;             /* +-> KiProcessorBlock */
+} kdd_os;
+
+
+typedef union {
+    uint32_t pad[179];
+    struct {
+        uint32_t u1[7];         /* Flags, DRx?? */
+        uint8_t fp[112];        /* FP save state (why 112 not 108?) */
+        int32_t gs;
+        int32_t fs;
+        int32_t es;
+        int32_t ds;
+        int32_t edi;
+        int32_t esi;
+        int32_t ebx;
+        int32_t edx;
+        int32_t ecx;
+        int32_t eax;
+        int32_t ebp;
+        int32_t eip;
+        int32_t cs;
+        int32_t eflags;
+        int32_t esp;
+        int32_t ss;
+        uint32_t sp2[37];       /* More 0x20202020. fp? */
+        uint32_t sp3;           /* 0x00202020 */
+    };
+} PACKED kdd_regs_x86_32;
+
+typedef union {
+    uint64_t pad[154];
+    struct {
+
+        uint64_t u1[7];
+
+        uint16_t cs; //2*1c
+        uint16_t ds;
+        uint16_t es;
+        uint16_t fs;
+        uint16_t gs;
+        uint16_t ss;
+        uint32_t rflags;
+        uint64_t dr0;
+        uint64_t dr1;
+        uint64_t dr2;
+        uint64_t dr3;
+        uint64_t dr6;
+        uint64_t dr7;
+        int64_t rax;
+        int64_t rcx;
+        int64_t rdx;
+        int64_t rbx;
+        int64_t rsp;
+        int64_t rbp;
+        int64_t rsi;
+        int64_t rdi;
+        int64_t r8;
+        int64_t r9;
+        int64_t r10;
+        int64_t r11;
+        int64_t r12;
+        int64_t r13;
+        int64_t r14;
+        int64_t r15;
+        int64_t rip; //2*7c
+
+        uint64_t u2[32];
+
+        uint8_t fp[512]; // fp @2*100 .. 150 (+ more??)
+
+        uint64_t u3[26];
+    };
+} PACKED kdd_regs_x86_64;
+
+typedef union {
+    kdd_regs_x86_32 r32;
+    kdd_regs_x86_64 r64;
+} PACKED kdd_regs;
+
+
+/* System registers */
+typedef struct {
+    uint32_t cr0;
+    uint32_t cr2;
+    uint32_t cr3;
+    uint32_t cr4;
+    uint32_t dr0;
+    uint32_t dr1;
+    uint32_t dr2;
+    uint32_t dr3;
+    uint32_t dr6;
+    uint32_t dr7;
+    uint16_t gdt_pad;
+    uint16_t gdt_limit;
+    uint32_t gdt_base;
+    uint16_t idt_pad;
+    uint16_t idt_limit;
+    uint32_t idt_base;
+    uint16_t tss_sel;
+    uint16_t ldt_sel;
+    uint8_t u1[24];
+} PACKED kdd_ctrl_x86_32;
+
+typedef struct {
+    uint64_t cr0;
+    uint64_t cr2;
+    uint64_t cr3;
+    uint64_t cr4;
+    uint64_t dr0;
+    uint64_t dr1;
+    uint64_t dr2;
+    uint64_t dr3;
+    uint64_t dr6;
+    uint64_t dr7;
+    uint8_t  gdt_pad[6];
+    uint16_t gdt_limit;
+    uint64_t gdt_base;
+    uint8_t  idt_pad[6];
+    uint16_t idt_limit;
+    uint64_t idt_base;
+    uint16_t tss_sel;
+    uint16_t ldt_sel;
+    uint8_t u1[44];
+    uint64_t cr8;
+    uint8_t u2[40];
+    uint64_t efer; // XXX find out where EFER actually goes
+} PACKED kdd_ctrl_x86_64;
+
+typedef union {
+    kdd_ctrl_x86_32 c32;
+    kdd_ctrl_x86_64 c64;
+} kdd_ctrl;
+
 #endif
