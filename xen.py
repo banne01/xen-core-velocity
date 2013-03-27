@@ -33,7 +33,13 @@ import volatility.addrspace as addrspace
 
 Xen_Header = "XenSavedDomain\n"
 
-
+#"Folliwing are xen page frames for VM so these hole are nasty (coz some of them do
+# not belong to VM memory
+# we need to fill stop before them for smaller VM ro fill them
+# with zeroes for Bigger Vms
+# 983040 - 984063 ( 1024 pfns worth 4MB)
+# 1032192 - 1032206    ( 15 pfns)
+# 1044475 - 104479     ( 5 pfns)
 
 XC_SAVE_ID_ENABLE_VERIFY_MODE = -1
 XC_SAVE_ID_VCPU_INFO          = -2
@@ -54,26 +60,21 @@ XC_SAVE_ID_HVM_ACCESS_RING_PFN    = -16
 XC_SAVE_ID_HVM_SHARING_RING_PFN   = -17
 XC_SAVE_ID_TOOLSTACK              = -18
 XEN_DOMCTL_PFINFO_LTAB_SHIFT    = 28
-XEN_DOMCTL_PFINFO_NOTAB         = (0x0U << 28)
-XEN_DOMCTL_PFINFO_L1TAB         = (0x1U << 28)
-XEN_DOMCTL_PFINFO_L2TAB         = (0x2U << 28)
-XEN_DOMCTL_PFINFO_L3TAB         =  (0x3U << 28)
-XEN_DOMCTL_PFINFO_L4TAB         = (0x4U << 28)
-XEN_DOMCTL_PFINFO_LTABTYPE_MASK = (0x7U<<28)
-XEN_DOMCTL_PFINFO_LPINTAB       = (0x1U<<31)
-XEN_DOMCTL_PFINFO_XTAB          = (0xfU<<28)
-XEN_DOMCTL_PFINFO_XALLOC        = (0xeU< <28)
-XEN_DOMCTL_PFINFO_BROKEN        = (0xdU<<28)
-XEN_DOMCTL_PFINFO_LTAB_MASK     = (0xfU<<28)
+XEN_DOMCTL_PFINFO_NOTAB         = (0x0 << 28)
+XEN_DOMCTL_PFINFO_L1TAB         = (0x1 << 28)
+XEN_DOMCTL_PFINFO_L2TAB         = (0x2 << 28)
+XEN_DOMCTL_PFINFO_L3TAB         = (0x3 << 28)
+XEN_DOMCTL_PFINFO_L4TAB         = (0x4 << 28)
+XEN_DOMCTL_PFINFO_LTABTYPE_MASK = (0x7 << 28)
+XEN_DOMCTL_PFINFO_LPINTAB       = (0x1 << 31)
+XEN_DOMCTL_PFINFO_XTAB          = (0xf << 28)
+XEN_DOMCTL_PFINFO_XALLOC        = (0xe << 28)
+XEN_DOMCTL_PFINFO_BROKEN        = (0xd << 28)
+XEN_DOMCTL_PFINFO_LTAB_MASK     = (0xf << 28)
 
 
 
 class tmem_oid(obj.CType):
-    """A class for VBox core dump descriptors"""
-    def zero(self):
-        return 0
-
-class pfn_array(obj.CType):
     """A class for VBox core dump descriptors"""
     def zero(self):
         return 0
@@ -88,66 +89,83 @@ class XenModification(obj.ProfileModification):
         profile.object_classes.update({'tmem_oid': tmem_oid})
 
 class XenSnapshot(addrspace.BaseAddressSpace):
-    """ This AS supports VirtualBox ELF64 coredump format """
+    """ This AS supports xen snapshot format """
 
-    order = 30
-    PAGE_SIZE = 4096
+    PAGE_SIZE  = 4096
+    PAGE_SHIFT = 12
+    # file offset while reading
+    s_offset   = 0;
+    # pfn to file_offset list
+    pfn_offsets = dict()
+    # memory runs in the batch of 1024 pages
+    xen_pfn_breaks = []
+    # max pfn
+    xen_vm_max_pfn = 0
+
     def __init__(self, base, config, **kwargs):
         ## We must have an AS below us
         self.as_assert(base, "No base Address Space")
         addrspace.BaseAddressSpace.__init__(self, base, config, **kwargs)
 
-        s_offset = 0;
+        self.s_offset = 0;
         self.as_assert(base.read(0, len(Xen_Header)) == Xen_Header,"Xen signature invalid")
-        s_offset = s_offset + len(Xen_Header);
+        self.s_offset = self.s_offset + len(Xen_Header);
         ## Base AS should be a file AS
         print ("Xen Signature valid")
 
-        p2m_size = obj.Object("unsigned long", offset = s_offset, vm = base)
+        p2m_size = obj.Object("unsigned long", offset = self.s_offset, vm = base)
 
         print(p2m_size)
         print("p2m_size read")
-        s_offset = s_offset + p2m_size.size()
+        self.s_offset = self.s_offset + p2m_size.size()
 
         while True:
-            rc = self.read_pfn_list(base, s_offset)
+            rc = self.read_pfn_list(base, self.s_offset)
             if rc <= 0:
                 break
 
         print("page reading done")
 
+        #print self.pfn_offsets
+        #for key,val in self.pfn_offsets.items():
+        #    print "PFns is  " + str(key) + " Offset " + str(val)
+
         ## Make sure its a core dump
+
+        max_memory_len =  self.pfn_to_memory(self.xen_vm_max_pfn)
+        print "Max frame no for the VM is " + str(self.xen_vm_max_pfn)
+        print "Max MEMORY for the VM is " + str(max_memory_len)
 
         ## Tuple of (physical memory address, file offset, length)
         self.runs = []
-
+        self.runs.append((int(0),int(0),int(max_memory_len)))
         ## The PT_NOTE core descriptor structure
         self.header = None
 
-        for phdr in elf.program_headers():
+        #for phdr in self.program_headers():
 
             ## The first note should be the VBCORE segment
-            if str(phdr.p_type) == 'PT_NOTE':
-                note = phdr.p_offset.dereference_as("elf64_note")
+            #if str(phdr.p_type) == 'PT_NOTE':
+            #    note = phdr.p_offset.dereference_as("elf64_note")
 
-                if note.namesz == 'VBCORE' and note.n_type == NT_VBOXCORE:
-                    self.header = note.cast_descsz("DBGFCOREDESCRIPTOR")
-                continue
+            #    if note.namesz == 'VBCORE' and note.n_type == NT_VBOXCORE:
+            #        self.header = note.cast_descsz("DBGFCOREDESCRIPTOR")
+            #    continue
 
             # Only keep load segments with valid file sizes
-            if (str(phdr.p_type) != 'PT_LOAD' or
-                    phdr.p_filesz == 0 or
-                    phdr.p_filesz != phdr.p_memsz):
-                continue
+            #if (str(phdr.p_type) != 'PT_LOAD' or
+            #        phdr.p_filesz == 0 or
+            #        phdr.p_filesz != phdr.p_memsz):
+            #    continue
 
-            self.runs.append((int(phdr.p_paddr),
-                              int(phdr.p_offset),
-                              int(phdr.p_memsz)))
+            #self.runs.append((int(phdr.p_paddr),
+            #                  int(phdr.p_offset),
+            #                  int(phdr.p_memsz)))
 
-        self.as_assert(self.header, 'ELF error: did not find any PT_NOTE segment with VBCORE')
-        self.as_assert(self.header.u32Magic == DBGFCORE_MAGIC, 'Could not find VBox core magic signature')
-        self.as_assert(self.header.u32FmtVersion == DBGFCORE_FMT_VERSION, 'Unknown VBox core format version')
-        self.as_assert(self.runs, 'ELF error: did not find any LOAD segment with main RAM')
+        #self.as_assert(self.header, 'ELF error: did not find any PT_NOTE segment with VBCORE')
+        #self.as_assert(self.header.u32Magic == DBGFCORE_MAGIC, 'Could not find VBox core magic signature')
+        #self.as_assert(self.header.u32FmtVersion == DBGFCORE_FMT_VERSION, 'Unknown VBox core format version')
+        #self.as_assert(self.runs, 'ELF error: did not find any LOAD segment with main RAM')
 
 #    def tmem_restore(self,base,offset):
 #
@@ -164,14 +182,14 @@ class XenSnapshot(addrspace.BaseAddressSpace):
 #    #if ( RDEXACT(io_fd, &cap, sizeof(cap)) )
 #    #if ( RDEXACT(io_fd, &minusone, sizeof(minusone)) )
 #        while True:
-#            pool_id = obj.Object("unsigned long", offset = s_offset, vm = base)
-#            s_offset = s_offset + pool_id.size()
+#            pool_id = obj.Object("unsigned long", offset = self.s_offset, vm = base)
+#            self.s_offset = self.s_offset + pool_id.size()
 #            if pool_id == -1:
 #                break
-#            s_offset = s_offset + 4; #flag
-#            n_pages = obj.Object("unsigned long", offset = s_offset, vm = base)
-#            s_offset = s_offset + 4; #npages
-#            s_offset = s_offset + 4; #uuuid
+#            self.s_offset = self.s_offset + 4; #flag
+#            n_pages = obj.Object("unsigned long", offset = self.s_offset, vm = base)
+#            self.s_offset = self.s_offset + 4; #npages
+#            self.s_offset = self.s_offset + 4; #uuuid
 #
 #            while n_pages > 0:
 #
@@ -219,39 +237,45 @@ class XenSnapshot(addrspace.BaseAddressSpace):
 #    return 0;
 #}
 
+    def memory_to_pfn(self, mem):
+        return  (mem >> self.PAGE_SHIFT )
+
+    def pfn_to_memory(self, pfn):
+        return (((pfn + 1 ) <<  self.PAGE_SHIFT) -1)
 
 
-    def read_pfn_list(self, base, s_offset):
-        print "read_pfn_list"
-        count = obj.Object("int", s_offset, base)
-        s_offset = s_offset + count.size()
-        print count
+
+    def read_pfn_list(self, base, offset):
+        #print "read_pfn_list"
+        count = obj.Object("int", self.s_offset, base)
+        self.s_offset = self.s_offset + count.size()
+        #print count
 
         if count == 0:
             return 0
 
         elif count == XC_SAVE_ID_TSC_INFO:
-            s_offset = s_offset + 20; #TSC_INFO uin32,uin64,uin32,uint32
-            return self.read_pfn_list(base,s_offset)
+            self.s_offset = self.s_offset + 20; #TSC_INFO uin32,uin64,uin32,uint32
+            return self.read_pfn_list(base,self.s_offset)
 
         elif count == XC_SAVE_ID_ENABLE_VERIFY_MODE:
-            return self.read_pfn_list(base,s_offset)
+            return self.read_pfn_list(base,self.s_offset)
 
         elif count == XC_SAVE_ID_VCPU_INFO:
-            s_offset = s_offset + count.size(); #max_vpuid
-            s_offset = s_offset + 8 # uint64
-            return self.read_pfn_list(base,s_offset)
+            self.s_offset = self.s_offset + count.size(); #max_vpuid
+            self.s_offset = self.s_offset + 8 # uint64
+            return self.read_pfn_list(base,self.s_offset)
 
         elif count == XC_SAVE_ID_HVM_IDENT_PT:
         # Skip padding 4 bytes then read the EPT identity PT location
-            s_offset = s_offset + 4 # uint32
-            s_offset = s_offset + 8 # uint64
-            return self.read_pfn_list(base,s_offset)
+            self.s_offset = self.s_offset + 4 # uint32
+            self.s_offset = self.s_offset + 8 # uint64
+            return self.read_pfn_list(base,self.s_offset)
 
         elif count == XC_SAVE_ID_HVM_VM86_TSS:
-            s_offset = s_offset + 4 # uint32
-            s_offset = s_offset + 8 # uint64
-            return self.read_pfn_list(base,s_offset)
+            self.s_offset = self.s_offset + 4 # uint32
+            self.s_offset = self.s_offset + 8 # uint64
+            return self.read_pfn_list(base,self.s_offset)
 
         elif count == XC_SAVE_ID_TMEM:
             #if ( xc_tmem_restore(fd) ) {
@@ -267,29 +291,29 @@ class XenSnapshot(addrspace.BaseAddressSpace):
             #RDEXACT(fd, &t2, sizeof(uint64_t)) ||
             #RDEXACT(fd, &t1, sizeof(uint32_t)) ||
             #RDEXACT(fd, &t1, sizeof(uint32_t)) )
-            s_offset = s_offset + 20 # uint64
-            return self.read_pfn_list(base,s_offset)
+            self.s_offset = self.s_offset + 20 # uint64
+            return self.read_pfn_list(base,self.s_offset)
 
         elif count == XC_SAVE_ID_HVM_CONSOLE_PFN :
             #if ( RDEXACT(fd, &t1, sizeof(uint32_t)) ||
             #        RDEXACT(fd, &t2, sizeof(uint64_t)) )
-            s_offset = s_offset + 12 # uint64
-            return self.read_pfn_list(base,s_offset)
+            self.s_offset = self.s_offset + 12 # uint64
+            return self.read_pfn_list(base,self.s_offset)
 
         elif count == XC_SAVE_ID_LAST_CHECKPOINT:
-            return self.read_pfn_list(base,s_offset)
+            return self.read_pfn_list(base,self.s_offset)
 
         elif count == XC_SAVE_ID_HVM_ACPI_IOPORTS_LOCATION:
             #if ( RDEXACT(fd, &t1, sizeof(uint32_t)) ||
             #        RDEXACT(fd, &t2, sizeof(uint64_t)) )
-            s_offset = s_offset + 12 # uint64
-            return self.read_pfn_list(base,s_offset)
+            self.s_offset = self.s_offset + 12 # uint64
+            return self.read_pfn_list(base,self.s_offset)
 
         elif count == XC_SAVE_ID_HVM_VIRIDIAN:
             #if ( RDEXACT(fd, &t1, sizeof(uint32_t)) ||
             #        RDEXACT(fd, &t2, sizeof(uint64_t)) )
-            s_offset = s_offset + 12 # uint64
-            return self.read_pfn_list(base,s_offset)
+            self.s_offset = self.s_offset + 12 # uint64
+            return self.read_pfn_list(base,self.s_offset)
 
         elif  (count > 1024) or (count < 0)  :
             return -1;
@@ -297,25 +321,43 @@ class XenSnapshot(addrspace.BaseAddressSpace):
         else:
             pass
 
-        pfn_array = obj.Object(theType = 'Array', offset = s_offset, vm = base, targetType = 'unsigned long', count = count)
-        #pfns = obj.Object("pfn_array", s_offset, base)
-        s_offset = pfn_array.size()
+        pfn_array = obj.Object(theType = 'Array', offset = self.s_offset, vm = base, targetType = 'unsigned long', count = count)
+        #pfns = obj.Object("pfn_array", self.s_offset, base)
+        self.s_offset = self.s_offset + pfn_array.size()
 
         countpages = count
 
         for x in pfn_array:
             if self.check_pfnvalid(x) == 0:
                 countpages = countpages -1;
-        s_offset = s_offset + countpages*self.PAGE_SIZE
-        print "reached at the end"
+            else :
+                pfnno = x & ~XEN_DOMCTL_PFINFO_LTAB_MASK
+                self.pfn_offsets[pfnno] =  self.s_offset
+                self.s_offset = self.s_offset + self.PAGE_SIZE
+                self.update_max_pfnno(pfnno)
+
+        #print "reached at the end with count " + str(countpages)
 
         return count
 
-    def check_pfnvalid(self, x)
-        if  (x & XEN_DOMCTL_PFINFO_LTAB_MASK == XEN_DOMCTL_PFINFO_XTAB ) or \
-            (x  & XEN_DOMCTL_PFINFO_LTAB_MASK == XEN_DOMCTL_PFINFO_XALLOC) :
+    def check_pfnvalid(self, x):
+        if  ((x & XEN_DOMCTL_PFINFO_LTAB_MASK == XEN_DOMCTL_PFINFO_XTAB ) or
+             (x  & XEN_DOMCTL_PFINFO_LTAB_MASK == XEN_DOMCTL_PFINFO_XALLOC)) :
             return 0
         return 1
+
+    def update_max_pfnno(self, pfn):
+        if (pfn >= 983040 and  pfn <= 984063):
+            return
+        elif (pfn >= 1032192 and pfn <= 1032206):
+            return
+        elif (pfn >=1044475 and pfn <= 1044479):
+            return
+        elif  (pfn > self.xen_vm_max_pfn):
+            #print "found max  " + str(pfn)
+            self.xen_vm_max_pfn = pfn
+        return
+
     #===============================================================
     ## FIXME: everything below can be abstract - shared with vmware
     #===============================================================
@@ -336,9 +378,14 @@ class XenSnapshot(addrspace.BaseAddressSpace):
 
         @param addr: a physical address
         """
-        for phys_addr, file_offset, length in self.runs:
-            if addr >= phys_addr and addr < phys_addr + length:
-                return file_offset + (addr - phys_addr)
+        "Cehck our pfn to offset map "
+        pfn = self.memory_to_pfn(addr)
+
+        if self.pfn_offsets[pfn] != None:
+           return (self.pfn_offsets[pfn] + addr % self.PAGE_SIZE )
+        #for phys_addr, file_offset, length in self.runs:
+        #    if addr >= phys_addr and addr < phys_addr + length:
+        #        return file_offset + (addr - phys_addr)
 
         return None
 
@@ -347,7 +394,7 @@ class XenSnapshot(addrspace.BaseAddressSpace):
 
         @param phys_addr: a physical address
         """
-        return self.get_addr(phys_addr) is not None
+        return (self.get_addr(phys_addr) !=  -1)
 
     def get_available_pages(self):
         page_list = []
@@ -362,24 +409,31 @@ class XenSnapshot(addrspace.BaseAddressSpace):
 
         ## The first (and possibly the only) main memory run
         first_run_addr, _, first_run_size = self.runs[0]
+        print "get_available_addresses"
+        print first_run_addr
+        print first_run_size
         yield (first_run_addr, first_run_size)
 
         ## If a system has more than 3.5 GB RAM, it will be
         ## split into multiple runs due to the VGA device mem
         ## constant VBE_DISPI_LFB_PHYSICAL_ADDRESS 0xE0000000.
-        if first_run_size == 0xE0000000:
-            for run_addr, _, run_size in self.runs[1:]:
-                ## not all segments above 0xE0000000 are main
-                ## memory, try to skip those that are not.
-                if run_addr >= 0x100000000:
-                    yield (run_addr, run_size)
+        #if first_run_size == 0xE0000000:
+        #    for run_addr, _, run_size in self.runs[1:]:
+        #        ## not all segments above 0xE0000000 are main
+        #        ## memory, try to skip those that are not.
+        #        if run_addr >= 0x100000000:
+        #            yield (run_addr, run_size)
 
     def get_address_range(self):
         """ This relates to the logical address range that is indexable """
+        print "get_address_range"
         (physical_address, _, length) = self.runs[-1]
         size = physical_address + length
         return [0, size]
-
+    def address_out_range(self, addr):
+        if self.memory_to_pfn(addr) > self.xen_vm_max_pfn:
+            return True
+        return False
     #===============================================================
     ## FIXME: everything below can be abstract - copied from crash
     #===============================================================
@@ -394,12 +448,17 @@ class XenSnapshot(addrspace.BaseAddressSpace):
         full_blocks = ((length + (addr % 0x1000)) / 0x1000) - 1
         left_over = (length + addr) % 0x1000
 
-        baddr = self.get_addr(addr)
-        if baddr == None:
-            return obj.NoneObject("Could not get base address at " + str(addr))
+        if  self.address_out_range(addr):
+            return obj.NoneObject("Could not get base address at " + str(new_addr))
 
+
+        baddr = self.get_addr(addr)
+        #if baddr == None: #this is an absent page , fill zeros
         if length < first_block:
-            stuff_read = self.base.read(baddr, length)
+            if baddr == None:
+                return '\0'*length #fille zeros
+            else:
+                stuff_read = self.base.read(baddr, length)
             return stuff_read
 
         stuff_read = self.base.read(baddr, first_block)
@@ -407,21 +466,21 @@ class XenSnapshot(addrspace.BaseAddressSpace):
         for _i in range(0, full_blocks):
             baddr = self.get_addr(new_addr)
             if baddr == None:
-                return obj.NoneObject("Could not get base address at " + str(new_addr))
+                return '0'*0X1000
             stuff_read = stuff_read + self.base.read(baddr, 0x1000)
             new_addr = new_addr + 0x1000
 
         if left_over > 0:
             baddr = self.get_addr(new_addr)
             if baddr == None:
-                return obj.NoneObject("Could not get base address at " + str(new_addr))
+                return '0'*left_over
+
             stuff_read = stuff_read + self.base.read(baddr, left_over)
 
         return stuff_read
 
     def check_address_range(self, addr):
-        memrange = self.get_address_range()
-        if addr < memrange[0] or addr > memrange[1]:
+        if self.memory_to_pfn(addr) > self.xen_vm_max_pfn:
             raise IOError
 
     def zread(self, addr, length):
