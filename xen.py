@@ -331,7 +331,7 @@ class XenSnapshot(addrspace.BaseAddressSpace):
             if self.check_pfnvalid(x) == 0:
                 countpages = countpages -1;
             else :
-                pfnno = x & ~XEN_DOMCTL_PFINFO_LTAB_MASK
+                pfnno = (x & ~XEN_DOMCTL_PFINFO_LTAB_MASK)
                 self.pfn_offsets[pfnno] =  self.s_offset
                 self.s_offset = self.s_offset + self.PAGE_SIZE
                 self.update_max_pfnno(pfnno)
@@ -379,14 +379,20 @@ class XenSnapshot(addrspace.BaseAddressSpace):
         @param addr: a physical address
         """
         "Cehck our pfn to offset map "
+        #print "xen get addr "  + str((addr))
         pfn = self.memory_to_pfn(addr)
-
-        if self.pfn_offsets[pfn] != None:
-           return (self.pfn_offsets[pfn] + addr % self.PAGE_SIZE )
+        #print "xen pfn "  + str((pfn))
+        try:
+            if self.pfn_offsets[pfn] != None:
+                #print "Found address"
+         #       print "Found Address at offset" + str((self.pfn_offsets[pfn] + addr % self.PAGE_SIZE ))
+                return (self.pfn_offsets[pfn] + addr % self.PAGE_SIZE )
+        except:
+             pass
         #for phys_addr, file_offset, length in self.runs:
         #    if addr >= phys_addr and addr < phys_addr + length:
         #        return file_offset + (addr - phys_addr)
-
+        #print "Not Found address" + str((addr))
         return None
 
     def is_valid_address(self, phys_addr):
@@ -394,7 +400,7 @@ class XenSnapshot(addrspace.BaseAddressSpace):
 
         @param phys_addr: a physical address
         """
-        return (self.get_addr(phys_addr) !=  -1)
+        return (self.address_out_range(phys_addr) == False)
 
     def get_available_pages(self):
         page_list = []
@@ -461,21 +467,26 @@ class XenSnapshot(addrspace.BaseAddressSpace):
                 stuff_read = self.base.read(baddr, length)
             return stuff_read
 
-        stuff_read = self.base.read(baddr, first_block)
+        if baddr == None:
+            stuff_read = '\0'*first_block
+        else:
+            stuff_read = self.base.read(baddr, first_block)
+
         new_addr = addr + first_block
         for _i in range(0, full_blocks):
             baddr = self.get_addr(new_addr)
             if baddr == None:
                 return '0'*0X1000
-            stuff_read = stuff_read + self.base.read(baddr, 0x1000)
+            else:
+                stuff_read = stuff_read + self.base.read(baddr, 0x1000)
             new_addr = new_addr + 0x1000
 
         if left_over > 0:
             baddr = self.get_addr(new_addr)
             if baddr == None:
                 return '0'*left_over
-
-            stuff_read = stuff_read + self.base.read(baddr, left_over)
+            else:
+                stuff_read = stuff_read + self.base.read(baddr, left_over)
 
         return stuff_read
 
