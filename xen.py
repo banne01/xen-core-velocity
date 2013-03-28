@@ -132,7 +132,7 @@ class XenSnapshot(addrspace.BaseAddressSpace):
 
         ## Make sure its a core dump
 
-        max_memory_len =  self.pfn_to_memory(self.xen_vm_max_pfn)
+        max_memory_len =  self.pfn_to_memory(self.xen_vm_max_pfn) + 1
         print "Max frame no for the VM is " + str(self.xen_vm_max_pfn)
         print "Max MEMORY for the VM is " + str(max_memory_len)
 
@@ -400,7 +400,9 @@ class XenSnapshot(addrspace.BaseAddressSpace):
 
         @param phys_addr: a physical address
         """
-        return (self.address_out_range(phys_addr) == False)
+        t =  (self.address_out_range(phys_addr) == False)
+        print "is valid address" + str(t)
+        return t
 
     def get_available_pages(self):
         page_list = []
@@ -438,6 +440,7 @@ class XenSnapshot(addrspace.BaseAddressSpace):
         return [0, size]
     def address_out_range(self, addr):
         if self.memory_to_pfn(addr) > self.xen_vm_max_pfn:
+            print "error :Address out of range "
             return True
         return False
     #===============================================================
@@ -455,10 +458,13 @@ class XenSnapshot(addrspace.BaseAddressSpace):
         left_over = (length + addr) % 0x1000
 
         if  self.address_out_range(addr):
-            return obj.NoneObject("Could not get base address at " + str(new_addr))
+            return obj.NoneObject("Could not get base address at " + str(addr))
 
 
         baddr = self.get_addr(addr)
+        print " addr" + str(addr)
+        print " offset" + str(baddr)
+        print "length"  + str(length)
         #if baddr == None: #this is an absent page , fill zeros
         if length < first_block:
             if baddr == None:
@@ -476,7 +482,7 @@ class XenSnapshot(addrspace.BaseAddressSpace):
         for _i in range(0, full_blocks):
             baddr = self.get_addr(new_addr)
             if baddr == None:
-                return '0'*0X1000
+                stuff_read = stuff_read + '0'*0X1000
             else:
                 stuff_read = stuff_read + self.base.read(baddr, 0x1000)
             new_addr = new_addr + 0x1000
@@ -484,7 +490,7 @@ class XenSnapshot(addrspace.BaseAddressSpace):
         if left_over > 0:
             baddr = self.get_addr(new_addr)
             if baddr == None:
-                return '0'*left_over
+                stuff_read = stuff_read + '0'*left_over
             else:
                 stuff_read = stuff_read + self.base.read(baddr, left_over)
 
