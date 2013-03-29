@@ -401,7 +401,7 @@ class XenSnapshot(addrspace.BaseAddressSpace):
         @param phys_addr: a physical address
         """
         t =  (self.address_out_range(phys_addr) == False)
-        print "is valid address" + str(t)
+        #print "is valid address" + str(t)
         return t
 
     def get_available_pages(self):
@@ -440,7 +440,7 @@ class XenSnapshot(addrspace.BaseAddressSpace):
         return [0, size]
     def address_out_range(self, addr):
         if self.memory_to_pfn(addr) > self.xen_vm_max_pfn:
-            print "error :Address out of range "
+            #print "error :Address out of range " +str(addr)
             return True
         return False
     #===============================================================
@@ -462,9 +462,9 @@ class XenSnapshot(addrspace.BaseAddressSpace):
 
 
         baddr = self.get_addr(addr)
-        print " addr" + str(addr)
-        print " offset" + str(baddr)
-        print "length"  + str(length)
+        #print " addr" + str(addr)
+        #print " offset" + str(baddr)
+        #print "length"  + str(length)
         #if baddr == None: #this is an absent page , fill zeros
         if length < first_block:
             if baddr == None:
