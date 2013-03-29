@@ -21,6 +21,9 @@
 #
 #Reference : May the source be with you
 # xen/tools/libxc/xg_save_restore.h
+# Xen snapshot is stack of tags
+# some tags are for VM memory others for different states like
+# vcpu and qemu.
 
 import volatility.obj as obj
 import volatility.addrspace as addrspace
